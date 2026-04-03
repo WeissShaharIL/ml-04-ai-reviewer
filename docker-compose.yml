@@ -1,0 +1,75 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - ./data/sqlite:/app/data
+    depends_on:
+      - ollama
+    networks:
+      - reviewer-net
+    restart: unless-stopped
+
+  ollama:
+    build:
+      context: ./ollama
+      dockerfile: Dockerfile
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    networks:
+      - reviewer-net
+    restart: unless-stopped
+
+  frontend-dash:
+    build:
+      context: ./frontend-dash
+      dockerfile: Dockerfile
+    ports:
+      - "3001:80"
+    depends_on:
+      - backend
+    networks:
+      - reviewer-net
+    restart: unless-stopped
+
+  sample-app-backend:
+    build:
+      context: ./sample-app/backend
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - DB_PATH=/app/data/puzzle.db
+    volumes:
+      - ./sample-app/backend:/app
+      - ./data/sample-app:/app/data
+    networks:
+      - reviewer-net
+    restart: unless-stopped
+
+  sample-app-frontend:
+    build:
+      context: ./sample-app/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - sample-app-backend
+    networks:
+      - reviewer-net
+    restart: unless-stopped
+
+volumes:
+  {}
+
+networks:
+  reviewer-net:
+    driver: bridge
