@@ -84,10 +84,18 @@ async def fetch_diff(repo: str, pr_number: int) -> str:
         resp.raise_for_status()
         return resp.text
 
+def truncate_diff(diff: str, max_chars: int = 8000) -> str:
+    if len(diff) <= max_chars:
+        return diff
+    lines     = diff.split('\n')
+    important = [l for l in lines if l.startswith(('+', '-', '@@', 'diff', 'index'))]
+    trimmed   = '\n'.join(important)
+    if len(trimmed) <= max_chars:
+        return trimmed
+    return trimmed[:max_chars] + "\n\n... [diff truncated]"
+
 def build_prompt(diff: str, pr_title: str) -> str:
-    max_diff = 12000
-    if len(diff) > max_diff:
-        diff = diff[:max_diff] + "\n\n... [diff truncated]"
+    diff = truncate_diff(diff, max_chars=8000)
     return f"""You are an expert code reviewer. Review the following pull request and provide structured feedback.
 
 PR Title: {pr_title}
@@ -198,7 +206,7 @@ async def call_claude(prompt: str) -> str:
         "max_tokens": 1024,
         "messages":   [{"role": "user", "content": prompt}],
     }
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=600) as client:
         resp = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
         resp.raise_for_status()
         return resp.json()["content"][0]["text"].strip()
@@ -254,10 +262,10 @@ async def run_review(review_id: int):
 
         except Exception as e:
             r.status = "failed"
-            r.review = f"Error: {str(e)}"
+            r.review = f"Error: {type(e).__name__}: {str(e)}"
             await db.commit()
             await publish({"type": "status", "review_id": review_id, "status": "failed",
-                           "message": f"Error: {str(e)}"})
+                        "message": f"Error: {type(e).__name__}: {str(e)}"})
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/health")

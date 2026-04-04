@@ -38,6 +38,27 @@ function repoShort(repo) {
   return repo ? repo.split('/')[1] : ''
 }
 
+function estimateReviewTime(diffSize) {
+  if (!diffSize) return null
+  const promptTokens = Math.floor(diffSize / 6)
+  const outputTokens = 500
+  const totalTokens  = promptTokens + outputTokens
+  const tokensPerSec = 7
+  const secs         = Math.floor(totalTokens / tokensPerSec)
+  if (secs < 60) return `~${secs}s`
+  return `~${Math.floor(secs / 60)}m ${secs % 60}s`
+}
+
+// ── Live clock hook ───────────────────────────────────────────────────────────
+function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(t)
+  }, [intervalMs])
+  return now
+}
+
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 function Markdown({ text }) {
   if (!text) return null
@@ -188,6 +209,38 @@ function LogConsole({ logs }) {
   )
 }
 
+// ── Progress Bar ──────────────────────────────────────────────────────────────
+function ProgressBar({ review }) {
+  const now          = useNow()
+  const estimateSecs = Math.floor((Math.floor(review.diff_size / 6) + 500) / 7)
+  const elapsedSecs  = Math.floor((now - new Date(review.created_at)) / 1000)
+  const progress     = Math.min(0.95, elapsedSecs / estimateSecs)
+  const remaining    = Math.max(0, estimateSecs - elapsedSecs)
+  const pct          = Math.floor(progress * 100)
+
+  const remainingStr = remaining < 60
+    ? `~${remaining}s remaining`
+    : `~${Math.floor(remaining / 60)}m ${remaining % 60}s remaining`
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontFamily: 'monospace', color: 'var(--muted)', marginBottom: 6 }}>
+        <span style={{ color: '#7c3aed' }}>{pct}% complete</span>
+        <span>{remainingStr}</span>
+      </div>
+      <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          width: `${pct}%`,
+          background: 'linear-gradient(90deg, #7c3aed, #a78bfa)',
+          borderRadius: 2,
+          transition: 'width 1s linear',
+        }} />
+      </div>
+    </div>
+  )
+}
+
 // ── Review Card ───────────────────────────────────────────────────────────────
 function ReviewCard({ review, onSelect, selected }) {
   const color    = STATUS_COLOR[review.status] || 'var(--muted)'
@@ -221,15 +274,25 @@ function ReviewCard({ review, onSelect, selected }) {
         </div>
         <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace' }}>{formatTime(review.created_at)}</span>
       </div>
+
       <div style={{ fontSize: 12, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 4 }}>
         {review.pr_title}
       </div>
-      <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace' }}>
+
+      <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', flexWrap: 'wrap' }}>
         <span>{review.author}</span>
         {review.diff_size && <span>diff: {formatBytes(review.diff_size)}</span>}
         {duration         && <span>took: {duration}</span>}
         {review.model     && <span>{review.model}</span>}
+        {(review.status === 'pending' || review.status === 'reviewing') && review.diff_size && (
+          <span style={{ color: '#7c3aed' }}>est. {estimateReviewTime(review.diff_size)}</span>
+        )}
       </div>
+
+      {/* Progress bar on card */}
+      {review.status === 'reviewing' && review.diff_size && (
+        <ProgressBar review={review} />
+      )}
     </div>
   )
 }
@@ -287,8 +350,7 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
       {/* Header */}
       <div style={{ background: '#0f0f13', borderRadius: 10, padding: 14, border: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            {/* Repo tag */}
+          <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ marginBottom: 6 }}>
               <span style={{
                 fontSize: 11, padding: '2px 10px', borderRadius: 4,
@@ -308,9 +370,16 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
               {review.model     && <span>model: {review.model}</span>}
               {review.provider  && <span>provider: {review.provider}</span>}
               {review.diff_size && <span>diff: {formatBytes(review.diff_size)}</span>}
+              {(review.status === 'pending' || review.status === 'reviewing') && review.diff_size && (
+                <span style={{ color: '#7c3aed' }}>est. {estimateReviewTime(review.diff_size)}</span>
+              )}
             </div>
+            {/* Progress bar in detail header */}
+            {review.status === 'reviewing' && review.diff_size && (
+              <ProgressBar review={review} />
+            )}
           </div>
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'flex-start' }}>
             <span style={{ padding: '3px 10px', borderRadius: 6, fontSize: 11, background: `${color}22`, color, fontFamily: 'monospace' }}>
               {STATUS_ICON[review.status]} {review.status.toUpperCase()}
             </span>
@@ -513,10 +582,8 @@ export default function App() {
           <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 6 }}>REPOSITORY</div>
             <RepoFilter repos={repos} active={repoFilter} onChange={setRepoFilter} />
-
             <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 6, marginTop: 8 }}>STATUS</div>
             <FilterBar active={filter} onChange={setFilter} />
-
             <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 8 }}>
               REVIEWS ({filtered.length}{filter !== 'all' || repoFilter !== 'all' ? ` / ${reviews.length}` : ''})
             </div>
