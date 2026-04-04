@@ -117,10 +117,10 @@ function StatsBar({ reviews }) {
 function FilterBar({ active, onChange }) {
   const filters = ['all', 'pending', 'reviewing', 'done', 'failed']
   return (
-    <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+    <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
       {filters.map(f => (
         <button key={f} onClick={() => onChange(f)} style={{
-          padding: '4px 12px', borderRadius: 6, fontSize: 11,
+          padding: '3px 8px', borderRadius: 6, fontSize: 10,
           fontFamily: 'monospace', letterSpacing: 1, cursor: 'pointer',
           border: `1px solid ${active === f ? STATUS_COLOR[f] || 'var(--accent)' : 'var(--border)'}`,
           background: active === f ? `${STATUS_COLOR[f] || '#7c3aed'}22` : 'transparent',
@@ -236,10 +236,10 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
   }, [review?.id, review?.status])
 
   if (!review) return (
-    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontFamily: 'monospace', fontSize: 13 }}>
-      ← Select a review
-    </div>
-  )
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontFamily: 'monospace', fontSize: 13, padding: 40 }}>
+    ← Select a review
+  </div>
+)
 
   const color    = STATUS_COLOR[review.status] || 'var(--muted)'
   const duration = formatDuration(review.created_at, review.completed_at)
@@ -463,8 +463,8 @@ export default function App() {
           <LogConsole logs={logs} />
         </div>
 
-        <div style={{ flex: 1, display: 'flex', gap: 16, minHeight: 0 }}>
-          <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, display: 'flex', gap: 16, minHeight: 400 }}>
+          <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 8 }}>
               REVIEWS ({filtered.length}{filter !== 'all' ? ` / ${reviews.length}` : ''})
             </div>
