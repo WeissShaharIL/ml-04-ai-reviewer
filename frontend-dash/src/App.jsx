@@ -34,6 +34,31 @@ function formatBytes(bytes) {
   return `${(bytes / 1024).toFixed(1)}KB`
 }
 
+function repoShort(repo) {
+  return repo ? repo.split('/')[1] : ''
+}
+
+function estimateReviewTime(diffSize) {
+  if (!diffSize) return null
+  const promptTokens = Math.floor(diffSize / 6)
+  const outputTokens = 500
+  const totalTokens  = promptTokens + outputTokens
+  const tokensPerSec = 7
+  const secs         = Math.floor(totalTokens / tokensPerSec)
+  if (secs < 60) return `~${secs}s`
+  return `~${Math.floor(secs / 60)}m ${secs % 60}s`
+}
+
+// ── Live clock hook ───────────────────────────────────────────────────────────
+function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(t)
+  }, [intervalMs])
+  return now
+}
+
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 function Markdown({ text }) {
   if (!text) return null
@@ -113,7 +138,29 @@ function StatsBar({ reviews }) {
   )
 }
 
-// ── Filter Bar ────────────────────────────────────────────────────────────────
+// ── Repo Filter ───────────────────────────────────────────────────────────────
+function RepoFilter({ repos, active, onChange }) {
+  return (
+    <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
+      {repos.map(r => (
+        <button key={r} onClick={() => onChange(r)} style={{
+          padding: '3px 8px', borderRadius: 6, fontSize: 10,
+          fontFamily: 'monospace', cursor: 'pointer',
+          border: `1px solid ${active === r ? '#0ea5e9' : 'var(--border)'}`,
+          background: active === r ? '#0ea5e922' : 'transparent',
+          color: active === r ? '#0ea5e9' : 'var(--muted)',
+          transition: 'all 0.15s',
+          maxWidth: 180, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {r === 'all' ? 'ALL REPOS' : repoShort(r).toUpperCase()}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── Status Filter ─────────────────────────────────────────────────────────────
 function FilterBar({ active, onChange }) {
   const filters = ['all', 'pending', 'reviewing', 'done', 'failed']
   return (
@@ -162,8 +209,43 @@ function LogConsole({ logs }) {
   )
 }
 
+// ── Progress Bar ──────────────────────────────────────────────────────────────
+// startedAt: timestamp (ms) of when the review entered "reviewing" status.
+// If unknown (page loaded mid-review), falls back to Date.now() so bar starts at 0% and climbs.
+function ProgressBar({ review, startedAt }) {
+  const now          = useNow()
+  const estimateSecs = Math.floor((Math.floor(review.diff_size / 6) + 500) / 7)
+  const origin       = startedAt ?? Date.now()
+  const elapsedSecs  = Math.floor((now - origin) / 1000)
+  const progress     = Math.min(0.95, elapsedSecs / estimateSecs)
+  const remaining    = Math.max(0, estimateSecs - elapsedSecs)
+  const pct          = Math.floor(progress * 100)
+
+  const remainingStr = remaining < 60
+    ? `~${remaining}s remaining`
+    : `~${Math.floor(remaining / 60)}m ${remaining % 60}s remaining`
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontFamily: 'monospace', color: 'var(--muted)', marginBottom: 6 }}>
+        <span style={{ color: '#7c3aed' }}>{pct}% complete</span>
+        <span>{remainingStr}</span>
+      </div>
+      <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          width: `${pct}%`,
+          background: 'linear-gradient(90deg, #7c3aed, #a78bfa)',
+          borderRadius: 2,
+          transition: 'width 1s linear',
+        }} />
+      </div>
+    </div>
+  )
+}
+
 // ── Review Card ───────────────────────────────────────────────────────────────
-function ReviewCard({ review, onSelect, selected }) {
+function ReviewCard({ review, onSelect, selected, reviewingStartedAt }) {
   const color    = STATUS_COLOR[review.status] || 'var(--muted)'
   const duration = formatDuration(review.created_at, review.completed_at)
 
@@ -174,6 +256,17 @@ function ReviewCard({ review, onSelect, selected }) {
       background: selected ? `${color}11` : 'var(--surface)',
       cursor: 'pointer', transition: 'all 0.15s', marginBottom: 6,
     }}>
+      {/* Repo tag */}
+      <div style={{ marginBottom: 6 }}>
+        <span style={{
+          fontSize: 10, padding: '2px 8px', borderRadius: 4,
+          background: '#0ea5e922', color: '#0ea5e9',
+          fontFamily: 'monospace', letterSpacing: 1,
+        }}>
+          {review.repo}
+        </span>
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span>{STATUS_ICON[review.status]}</span>
@@ -184,15 +277,25 @@ function ReviewCard({ review, onSelect, selected }) {
         </div>
         <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace' }}>{formatTime(review.created_at)}</span>
       </div>
+
       <div style={{ fontSize: 12, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 4 }}>
         {review.pr_title}
       </div>
-      <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace' }}>
+
+      <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', flexWrap: 'wrap' }}>
         <span>{review.author}</span>
         {review.diff_size && <span>diff: {formatBytes(review.diff_size)}</span>}
         {duration         && <span>took: {duration}</span>}
         {review.model     && <span>{review.model}</span>}
+        {(review.status === 'pending' || review.status === 'reviewing') && review.diff_size && (
+          <span style={{ color: '#7c3aed' }}>est. {estimateReviewTime(review.diff_size)}</span>
+        )}
       </div>
+
+      {/* Progress bar on card */}
+      {review.status === 'reviewing' && review.diff_size && (
+        <ProgressBar review={review} startedAt={reviewingStartedAt?.[review.id]} />
+      )}
     </div>
   )
 }
@@ -220,7 +323,7 @@ function TokenStream({ tokens }) {
 }
 
 // ── Review Detail ─────────────────────────────────────────────────────────────
-function ReviewDetail({ review, onRetry, streamTokens }) {
+function ReviewDetail({ review, onRetry, streamTokens, reviewingStartedAt }) {
   const [full, setFull]       = useState(null)
   const [loading, setLoading] = useState(false)
   const [tab, setTab]         = useState('review')
@@ -236,13 +339,13 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
   }, [review?.id, review?.status])
 
   if (!review) return (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontFamily: 'monospace', fontSize: 13, padding: 40 }}>
-    ← Select a review
-  </div>
-)
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontFamily: 'monospace', fontSize: 13, padding: 40 }}>
+      ← Select a review
+    </div>
+  )
 
-  const color    = STATUS_COLOR[review.status] || 'var(--muted)'
-  const duration = formatDuration(review.created_at, review.completed_at)
+  const color      = STATUS_COLOR[review.status] || 'var(--muted)'
+  const duration   = formatDuration(review.created_at, review.completed_at)
   const liveTokens = streamTokens[review.id] || ''
 
   return (
@@ -250,8 +353,16 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
       {/* Header */}
       <div style={{ background: '#0f0f13', borderRadius: 10, padding: 14, border: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace', marginBottom: 4 }}>{review.repo}</div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ marginBottom: 6 }}>
+              <span style={{
+                fontSize: 11, padding: '2px 10px', borderRadius: 4,
+                background: '#0ea5e922', color: '#0ea5e9',
+                fontFamily: 'monospace', letterSpacing: 1,
+              }}>
+                {review.repo}
+              </span>
+            </div>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               PR #{review.pr_number} — {review.pr_title}
             </div>
@@ -262,9 +373,16 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
               {review.model     && <span>model: {review.model}</span>}
               {review.provider  && <span>provider: {review.provider}</span>}
               {review.diff_size && <span>diff: {formatBytes(review.diff_size)}</span>}
+              {(review.status === 'pending' || review.status === 'reviewing') && review.diff_size && (
+                <span style={{ color: '#7c3aed' }}>est. {estimateReviewTime(review.diff_size)}</span>
+              )}
             </div>
+            {/* Progress bar in detail header */}
+            {review.status === 'reviewing' && review.diff_size && (
+              <ProgressBar review={review} startedAt={reviewingStartedAt?.[review.id]} />
+            )}
           </div>
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'flex-start' }}>
             <span style={{ padding: '3px 10px', borderRadius: 6, fontSize: 11, background: `${color}22`, color, fontFamily: 'monospace' }}>
               {STATUS_ICON[review.status]} {review.status.toUpperCase()}
             </span>
@@ -283,7 +401,7 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
         </div>
       </div>
 
-      {/* Tabs — only show when not actively streaming */}
+      {/* Tabs */}
       {full?.diff && review.status !== 'reviewing' && (
         <div style={{ display: 'flex', gap: 6 }}>
           {['review', 'diff'].map(t => (
@@ -305,12 +423,8 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
       }}>
         {loading && <div style={{ color: 'var(--muted)', fontFamily: 'monospace', fontSize: 13 }}>Loading...</div>}
 
-        {/* Live token stream while reviewing */}
-        {!loading && review.status === 'reviewing' && (
-          <TokenStream tokens={liveTokens} />
-        )}
+        {!loading && review.status === 'reviewing' && <TokenStream tokens={liveTokens} />}
 
-        {/* Final review rendered as markdown */}
         {!loading && review.status !== 'reviewing' && tab === 'review' && (
           <>
             {full?.review && <Markdown text={full.review} />}
@@ -323,7 +437,6 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
           </>
         )}
 
-        {/* Diff viewer */}
         {!loading && tab === 'diff' && review.status !== 'reviewing' && full?.diff && (
           <pre style={{ fontFamily: "'Courier New', monospace", fontSize: 11, whiteSpace: 'pre-wrap', margin: 0, lineHeight: 1.6 }}>
             {full.diff.split('\n').map((line, i) => (
@@ -341,14 +454,16 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [reviews, setReviews]         = useState([])
-  const [selected, setSelected]       = useState(null)
-  const [logs, setLogs]               = useState([])
-  const [connected, setConnected]     = useState(false)
-  const [config, setConfig]           = useState(null)
-  const [filter, setFilter]           = useState('all')
-  const [streamTokens, setStreamTokens] = useState({})
-  const eventSourceRef                = useRef(null)
+  const [reviews, setReviews]                 = useState([])
+  const [selected, setSelected]               = useState(null)
+  const [logs, setLogs]                       = useState([])
+  const [connected, setConnected]             = useState(false)
+  const [config, setConfig]                   = useState(null)
+  const [filter, setFilter]                   = useState('all')
+  const [repoFilter, setRepoFilter]           = useState('all')
+  const [streamTokens, setStreamTokens]       = useState({})
+  const [reviewingStartedAt, setReviewingStartedAt] = useState({})
+  const eventSourceRef                        = useRef(null)
 
   const addLog = (event) => {
     if (event.type === 'ping' || event.type === 'token') return
@@ -385,6 +500,15 @@ export default function App() {
           return
         }
 
+        // Record the moment a review transitions to "reviewing"
+        if (event.type === 'status' && event.status === 'reviewing' && event.review_id) {
+          setReviewingStartedAt(prev => ({
+            ...prev,
+            // Only set once — don't overwrite if already recorded
+            [event.review_id]: prev[event.review_id] ?? Date.now(),
+          }))
+        }
+
         addLog(event)
 
         if (['status', 'pr_received', 'done', 'failed'].includes(event.type)) {
@@ -417,13 +541,18 @@ export default function App() {
 
   const handleRetry = (id) => {
     setStreamTokens(prev => ({ ...prev, [id]: '' }))
+    // Reset the start time so the progress bar restarts from 0
+    setReviewingStartedAt(prev => ({ ...prev, [id]: undefined }))
     fetch(`${API}/reviews/${id}/retry`, { method: 'POST' }).then(() => {
       loadReviews()
       addLog({ type: 'log', message: `Retry triggered for review #${id}` })
     })
   }
 
-  const filtered = filter === 'all' ? reviews : reviews.filter(r => r.status === filter)
+  const repos    = ['all', ...new Set(reviews.map(r => r.repo))]
+  const filtered = reviews
+    .filter(r => filter === 'all' || r.status === filter)
+    .filter(r => repoFilter === 'all' || r.repo === repoFilter)
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)', display: 'flex', flexDirection: 'column' }}>
@@ -464,25 +593,41 @@ export default function App() {
         </div>
 
         <div style={{ flex: 1, display: 'flex', gap: 16, minHeight: 400 }}>
+          {/* Left panel */}
           <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 8 }}>
-              REVIEWS ({filtered.length}{filter !== 'all' ? ` / ${reviews.length}` : ''})
-            </div>
+            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 6 }}>REPOSITORY</div>
+            <RepoFilter repos={repos} active={repoFilter} onChange={setRepoFilter} />
+            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 6, marginTop: 8 }}>STATUS</div>
             <FilterBar active={filter} onChange={setFilter} />
+            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 8 }}>
+              REVIEWS ({filtered.length}{filter !== 'all' || repoFilter !== 'all' ? ` / ${reviews.length}` : ''})
+            </div>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               {filtered.length === 0 && (
                 <div style={{ color: 'var(--muted)', fontFamily: 'monospace', fontSize: 12, padding: 16, textAlign: 'center' }}>
-                  {filter === 'all' ? 'No reviews yet.\nOpen a PR to trigger one.' : `No ${filter} reviews.`}
+                  No reviews match the current filter.
                 </div>
               )}
               {filtered.map(r => (
-                <ReviewCard key={r.id} review={r} selected={selected?.id === r.id} onSelect={setSelected} />
+                <ReviewCard
+                  key={r.id}
+                  review={r}
+                  selected={selected?.id === r.id}
+                  onSelect={setSelected}
+                  reviewingStartedAt={reviewingStartedAt}
+                />
               ))}
             </div>
           </div>
 
+          {/* Right panel */}
           <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, minHeight: 400 }}>
-            <ReviewDetail review={selected} onRetry={handleRetry} streamTokens={streamTokens} />
+            <ReviewDetail
+              review={selected}
+              onRetry={handleRetry}
+              streamTokens={streamTokens}
+              reviewingStartedAt={reviewingStartedAt}
+            />
           </div>
         </div>
       </div>

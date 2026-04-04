@@ -24,6 +24,8 @@ services:
       - "11434:11434"
     volumes:
       - ./data/ollama:/root/.ollama
+    environment:
+    - OLLAMA_NUM_CTX=16384
     networks:
       - reviewer-net
     restart: unless-stopped
