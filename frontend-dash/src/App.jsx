@@ -210,10 +210,13 @@ function LogConsole({ logs }) {
 }
 
 // ── Progress Bar ──────────────────────────────────────────────────────────────
-function ProgressBar({ review }) {
+// startedAt: timestamp (ms) of when the review entered "reviewing" status.
+// If unknown (page loaded mid-review), falls back to Date.now() so bar starts at 0% and climbs.
+function ProgressBar({ review, startedAt }) {
   const now          = useNow()
   const estimateSecs = Math.floor((Math.floor(review.diff_size / 6) + 500) / 7)
-  const elapsedSecs  = Math.floor((now - new Date(review.created_at)) / 1000)
+  const origin       = startedAt ?? Date.now()
+  const elapsedSecs  = Math.floor((now - origin) / 1000)
   const progress     = Math.min(0.95, elapsedSecs / estimateSecs)
   const remaining    = Math.max(0, estimateSecs - elapsedSecs)
   const pct          = Math.floor(progress * 100)
@@ -242,7 +245,7 @@ function ProgressBar({ review }) {
 }
 
 // ── Review Card ───────────────────────────────────────────────────────────────
-function ReviewCard({ review, onSelect, selected }) {
+function ReviewCard({ review, onSelect, selected, reviewingStartedAt }) {
   const color    = STATUS_COLOR[review.status] || 'var(--muted)'
   const duration = formatDuration(review.created_at, review.completed_at)
 
@@ -291,7 +294,7 @@ function ReviewCard({ review, onSelect, selected }) {
 
       {/* Progress bar on card */}
       {review.status === 'reviewing' && review.diff_size && (
-        <ProgressBar review={review} />
+        <ProgressBar review={review} startedAt={reviewingStartedAt?.[review.id]} />
       )}
     </div>
   )
@@ -320,7 +323,7 @@ function TokenStream({ tokens }) {
 }
 
 // ── Review Detail ─────────────────────────────────────────────────────────────
-function ReviewDetail({ review, onRetry, streamTokens }) {
+function ReviewDetail({ review, onRetry, streamTokens, reviewingStartedAt }) {
   const [full, setFull]       = useState(null)
   const [loading, setLoading] = useState(false)
   const [tab, setTab]         = useState('review')
@@ -376,7 +379,7 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
             </div>
             {/* Progress bar in detail header */}
             {review.status === 'reviewing' && review.diff_size && (
-              <ProgressBar review={review} />
+              <ProgressBar review={review} startedAt={reviewingStartedAt?.[review.id]} />
             )}
           </div>
           <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'flex-start' }}>
@@ -451,15 +454,16 @@ function ReviewDetail({ review, onRetry, streamTokens }) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [reviews, setReviews]           = useState([])
-  const [selected, setSelected]         = useState(null)
-  const [logs, setLogs]                 = useState([])
-  const [connected, setConnected]       = useState(false)
-  const [config, setConfig]             = useState(null)
-  const [filter, setFilter]             = useState('all')
-  const [repoFilter, setRepoFilter]     = useState('all')
-  const [streamTokens, setStreamTokens] = useState({})
-  const eventSourceRef                  = useRef(null)
+  const [reviews, setReviews]                 = useState([])
+  const [selected, setSelected]               = useState(null)
+  const [logs, setLogs]                       = useState([])
+  const [connected, setConnected]             = useState(false)
+  const [config, setConfig]                   = useState(null)
+  const [filter, setFilter]                   = useState('all')
+  const [repoFilter, setRepoFilter]           = useState('all')
+  const [streamTokens, setStreamTokens]       = useState({})
+  const [reviewingStartedAt, setReviewingStartedAt] = useState({})
+  const eventSourceRef                        = useRef(null)
 
   const addLog = (event) => {
     if (event.type === 'ping' || event.type === 'token') return
@@ -496,6 +500,15 @@ export default function App() {
           return
         }
 
+        // Record the moment a review transitions to "reviewing"
+        if (event.type === 'status' && event.status === 'reviewing' && event.review_id) {
+          setReviewingStartedAt(prev => ({
+            ...prev,
+            // Only set once — don't overwrite if already recorded
+            [event.review_id]: prev[event.review_id] ?? Date.now(),
+          }))
+        }
+
         addLog(event)
 
         if (['status', 'pr_received', 'done', 'failed'].includes(event.type)) {
@@ -528,6 +541,8 @@ export default function App() {
 
   const handleRetry = (id) => {
     setStreamTokens(prev => ({ ...prev, [id]: '' }))
+    // Reset the start time so the progress bar restarts from 0
+    setReviewingStartedAt(prev => ({ ...prev, [id]: undefined }))
     fetch(`${API}/reviews/${id}/retry`, { method: 'POST' }).then(() => {
       loadReviews()
       addLog({ type: 'log', message: `Retry triggered for review #${id}` })
@@ -594,14 +609,25 @@ export default function App() {
                 </div>
               )}
               {filtered.map(r => (
-                <ReviewCard key={r.id} review={r} selected={selected?.id === r.id} onSelect={setSelected} />
+                <ReviewCard
+                  key={r.id}
+                  review={r}
+                  selected={selected?.id === r.id}
+                  onSelect={setSelected}
+                  reviewingStartedAt={reviewingStartedAt}
+                />
               ))}
             </div>
           </div>
 
           {/* Right panel */}
           <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, minHeight: 400 }}>
-            <ReviewDetail review={selected} onRetry={handleRetry} streamTokens={streamTokens} />
+            <ReviewDetail
+              review={selected}
+              onRetry={handleRetry}
+              streamTokens={streamTokens}
+              reviewingStartedAt={reviewingStartedAt}
+            />
           </div>
         </div>
       </div>

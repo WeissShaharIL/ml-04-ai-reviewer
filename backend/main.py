@@ -178,9 +178,15 @@ def format_review_comment(parsed: dict) -> str:
     return "\n".join(lines)
 
 async def call_ollama_stream(prompt: str, review_id: int) -> str:
-    payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": True}
+    payload = {
+        "model":   OLLAMA_MODEL,
+        "prompt":  prompt,
+        "stream":  True,
+        "options": {"num_ctx": 16384},
+    }
     full_response = ""
-    async with httpx.AsyncClient(timeout=300) as client:
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
