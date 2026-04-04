@@ -36,10 +36,8 @@ switch ($Action) {
         docker compose up --build -d
         if ($LASTEXITCODE -ne 0) { Write-Fail "docker compose up failed"; exit 1 }
         Write-Success "All services running"
-        Write-Host ""
-        Write-Host "  Puzzle Game        ->  http://localhost:3000" -ForegroundColor Yellow
-        Write-Host "  Reviewer Dashboard ->  http://localhost:3001" -ForegroundColor Yellow
-        Write-Host "  Puzzle API         ->  http://localhost:3002/docs" -ForegroundColor Yellow
+        Write-Host ""        
+        Write-Host "  Reviewer Dashboard ->  http://localhost:3001" -ForegroundColor Yellow        
         Write-Host "  Reviewer API       ->  http://localhost:8000/docs" -ForegroundColor Yellow
         Write-Host "  Ollama             ->  http://localhost:11434" -ForegroundColor Yellow
     }
