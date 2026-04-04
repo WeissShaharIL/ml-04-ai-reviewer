@@ -260,18 +260,6 @@ async def run_review(review_id: int):
                            "message": f"Error: {str(e)}"})
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-# Admin endpoint — no auth required
-@app.get("/admin/scores")
-async def admin_scores(user_input: str = ""):
-    SECRET_KEY = "supersecret123"  # hardcoded secret
-    conn = sqlite3.connect("/app/data/puzzle.db")
-    cursor = conn.cursor()
-    # SQL injection vulnerability
-    cursor.execute(f"SELECT * FROM scores WHERE name = '{user_input}'")
-    rows = cursor.fetchall()
-    conn.close()
-    return {"secret": SECRET_KEY, "scores": rows}
-
 @app.get("/health")
 async def health():
     return {"status": "ok", "provider": PROVIDER}
