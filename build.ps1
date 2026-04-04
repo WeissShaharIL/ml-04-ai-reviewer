@@ -18,7 +18,7 @@ function Write-Fail ($msg) {
 
 function Init-Dirs {
     Write-Step "Initializing data directories..."
-    $dirs = @("data/sqlite", "data/ollama", "data/sample-app")
+    $dirs = @("data/sqlite", "data/ollama")
     foreach ($dir in $dirs) {
         if (-not (Test-Path $dir)) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -36,8 +36,8 @@ switch ($Action) {
         docker compose up --build -d
         if ($LASTEXITCODE -ne 0) { Write-Fail "docker compose up failed"; exit 1 }
         Write-Success "All services running"
-        Write-Host ""        
-        Write-Host "  Reviewer Dashboard ->  http://localhost:3001" -ForegroundColor Yellow        
+        Write-Host ""
+        Write-Host "  Reviewer Dashboard ->  http://localhost:3001" -ForegroundColor Yellow
         Write-Host "  Reviewer API       ->  http://localhost:8000/docs" -ForegroundColor Yellow
         Write-Host "  Ollama             ->  http://localhost:11434" -ForegroundColor Yellow
     }
@@ -85,3 +85,4 @@ switch ($Action) {
         Write-Host "  clean    Stop, remove volumes, and delete data/"
     }
 }
+
