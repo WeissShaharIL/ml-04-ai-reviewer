@@ -50,7 +50,11 @@ class Review(Base):
     diff         = Column(Text, nullable=True)
     review       = Column(Text, nullable=True)
     status       = Column(String(32), default="pending")
+    provider     = Column(String(32), nullable=True)
+    model        = Column(String(128), nullable=True)
+    diff_size    = Column(Integer, nullable=True)
     created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime, nullable=True)
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="AI Reviewer")
@@ -206,7 +210,10 @@ async def run_review(review_id: int):
             await publish({"type": "error", "review_id": review_id, "message": "No diff found"})
             return
 
-        r.status = "reviewing"
+        r.status   = "reviewing"
+        r.provider = PROVIDER
+        r.model    = OLLAMA_MODEL if PROVIDER == "ollama" else CLAUDE_MODEL
+        r.diff_size = len(r.diff)
         await db.commit()
         await publish({"type": "status", "review_id": review_id, "status": "reviewing",
                        "message": f"Sending diff to {PROVIDER}..."})
@@ -227,8 +234,9 @@ async def run_review(review_id: int):
 
             await post_github_comment(r.repo, r.pr_number, comment)
 
-            r.review = comment
-            r.status = "done"
+            r.review       = comment
+            r.status       = "done"
+            r.completed_at = datetime.now(timezone.utc)
             await db.commit()
             await publish({"type": "status", "review_id": review_id, "status": "done",
                            "message": "Review posted to GitHub successfully"})
@@ -239,7 +247,6 @@ async def run_review(review_id: int):
             await db.commit()
             await publish({"type": "status", "review_id": review_id, "status": "failed",
                            "message": f"Error: {str(e)}"})
-
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
@@ -335,14 +342,18 @@ async def get_reviews():
         reviews = result.scalars().all()
         return [
             {
-                "id":         r.id,
-                "pr_number":  r.pr_number,
-                "repo":       r.repo,
-                "pr_title":   r.pr_title,
-                "pr_url":     r.pr_url,
-                "author":     r.author,
-                "status":     r.status,
-                "created_at": r.created_at,
+                "id":           r.id,
+                "pr_number":    r.pr_number,
+                "repo":         r.repo,
+                "pr_title":     r.pr_title,
+                "pr_url":       r.pr_url,
+                "author":       r.author,
+                "status":       r.status,
+                "provider":     r.provider,
+                "model":        r.model,
+                "diff_size":    r.diff_size,
+                "created_at":   r.created_at,
+                "completed_at": r.completed_at,
             }
             for r in reviews
         ]
@@ -355,16 +366,20 @@ async def get_review(review_id: int):
         if not r:
             raise HTTPException(status_code=404, detail="Review not found")
         return {
-            "id":         r.id,
-            "pr_number":  r.pr_number,
-            "repo":       r.repo,
-            "pr_title":   r.pr_title,
-            "pr_url":     r.pr_url,
-            "author":     r.author,
-            "diff":       r.diff,
-            "review":     r.review,
-            "status":     r.status,
-            "created_at": r.created_at,
+            "id":           r.id,
+            "pr_number":    r.pr_number,
+            "repo":         r.repo,
+            "pr_title":     r.pr_title,
+            "pr_url":       r.pr_url,
+            "author":       r.author,
+            "diff":         r.diff,
+            "review":       r.review,
+            "status":       r.status,
+            "provider":     r.provider,
+            "model":        r.model,
+            "diff_size":    r.diff_size,
+            "created_at":   r.created_at,
+            "completed_at": r.completed_at,
         }
 
 @app.post("/reviews/{review_id}/retry")
